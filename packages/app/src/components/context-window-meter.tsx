@@ -11,6 +11,11 @@ import { formatTokenCount } from "./context-window-meter.utils";
 interface ContextWindowMeterProps {
   maxTokens: number;
   usedTokens: number;
+  /**
+   * Cumulative tokens processed by the whole chat (this agent + its descendant
+   * subagents/workflows). Distinct from the live window fill `usedTokens`.
+   */
+  chatTotalTokens?: number | null;
   totalCostUsd?: number | null;
   showPercentage?: boolean;
   serverId?: string;
@@ -96,6 +101,7 @@ function getMeterGeometry(showPercentage: boolean) {
 export function ContextWindowMeter({
   maxTokens,
   usedTokens,
+  chatTotalTokens,
   totalCostUsd,
   showPercentage = false,
   serverId,
@@ -131,6 +137,11 @@ export function ContextWindowMeter({
   const colors = getMeterColors(clampedPercentage, theme);
   const formattedSessionCost =
     typeof totalCostUsd === "number" ? formatSessionCost(totalCostUsd) : null;
+  const formattedChatTotalTokens =
+    typeof chatTotalTokens === "number" && Number.isFinite(chatTotalTokens) && chatTotalTokens > 0
+      ? formatTokenCount(chatTotalTokens)
+      : null;
+  const hasChatTotalSection = formattedChatTotalTokens !== null || formattedSessionCost !== null;
 
   return (
     <Tooltip
@@ -184,20 +195,32 @@ export function ContextWindowMeter({
       </TooltipTrigger>
       <TooltipContent side="top" align="center" offset={8}>
         <View style={styles.tooltipContent}>
-          <Text style={styles.tooltipTitle}>{t("contextWindow.title")}</Text>
-          <Text style={styles.tooltipText}>
-            {t("contextWindow.used", { percentage: roundedPercentage })}
-          </Text>
-          <Text style={styles.tooltipDetail}>
-            {t("contextWindow.tokens", {
-              used: formatTokenCount(usedTokens),
-              max: formatTokenCount(maxTokens),
-            })}
-          </Text>
-          {formattedSessionCost ? (
-            <Text style={styles.tooltipDetail}>
-              {t("contextWindow.sessionCost", { cost: formattedSessionCost })}
+          <View style={styles.tooltipSection}>
+            <Text style={styles.tooltipTitle}>{t("contextWindow.title")}</Text>
+            <Text style={styles.tooltipText}>
+              {t("contextWindow.used", { percentage: roundedPercentage })}
             </Text>
+            <Text style={styles.tooltipDetail}>
+              {t("contextWindow.tokens", {
+                used: formatTokenCount(usedTokens),
+                max: formatTokenCount(maxTokens),
+              })}
+            </Text>
+          </View>
+          {hasChatTotalSection ? (
+            <View style={styles.tooltipSection}>
+              <Text style={styles.tooltipTitle}>{t("contextWindow.chatTotalTitle")}</Text>
+              {formattedChatTotalTokens ? (
+                <Text style={styles.tooltipDetail}>
+                  {t("contextWindow.chatTotalTokens", { tokens: formattedChatTotalTokens })}
+                </Text>
+              ) : null}
+              {formattedSessionCost ? (
+                <Text style={styles.tooltipDetail}>
+                  {t("contextWindow.sessionCost", { cost: formattedSessionCost })}
+                </Text>
+              ) : null}
+            </View>
           ) : null}
           <ProviderUsageTooltipSection view={providerUsageView} activeProviderId={provider} />
         </View>
@@ -231,8 +254,11 @@ const styles = StyleSheet.create((theme) => ({
     fontWeight: theme.fontWeight.normal,
   },
   tooltipContent: {
-    gap: theme.spacing[1],
+    gap: theme.spacing[2],
     minWidth: 200,
+  },
+  tooltipSection: {
+    gap: theme.spacing[1],
   },
   tooltipTitle: {
     color: theme.colors.foreground,

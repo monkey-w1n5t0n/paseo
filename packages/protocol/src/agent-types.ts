@@ -177,6 +177,14 @@ export interface AgentUsage {
   totalCostUsd?: number;
   contextWindowMaxTokens?: number;
   contextWindowUsedTokens?: number;
+  /**
+   * Cumulative tokens processed by this agent's whole session — every API call
+   * across all turns, including in-process subagents (e.g. Claude `Task`). Only
+   * ever grows; unlike `contextWindowUsedTokens` it is not the live window fill.
+   * The client sums this across an agent's descendant tree for a chat total.
+   * Additive/optional: absent from older daemons, display is gated on presence.
+   */
+  sessionTotalTokens?: number;
 }
 
 export const TOOL_CALL_ICON_NAMES = [

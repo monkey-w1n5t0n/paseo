@@ -41,7 +41,7 @@ import {
 } from "@/composer/agent-controls";
 import { ContextWindowMeter } from "@/components/context-window-meter";
 import { useImageAttachmentPicker } from "@/hooks/use-image-attachment-picker";
-import { useSessionStore } from "@/stores/session-store";
+import { type Agent, useSessionStore } from "@/stores/session-store";
 import { useFilePicker } from "@/hooks/use-file-picker";
 import { MessageInput, type MessageInputRef, type AttachmentMenuItem } from "./input/input";
 import type { ImageAttachment, MessagePayload } from "./types";
@@ -188,14 +188,57 @@ function buildRealtimeVoiceButtonStyle(
   );
 }
 
+/**
+ * Sum the chat-total tokens and cost across an agent's whole tree: the agent
+ * itself plus every descendant (subagents, dynamic-workflow agents) reachable
+ * through `parentAgentId`. Each agent's `sessionTotalTokens` already includes
+ * its own in-process Task subagents, so summing the tree gives the full chat
+ * total. Returns null for a metric when no agent in the tree reported it.
+ */
+function sumChatTotalsForTree(
+  agents: Map<string, Agent> | undefined,
+  rootAgentId: string,
+): { chatTotalTokens: number | null; chatTotalCostUsd: number | null } {
+  if (!agents || agents.size === 0) {
+    return { chatTotalTokens: null, chatTotalCostUsd: null };
+  }
+  const inTree = new Set<string>([rootAgentId]);
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const agent of agents.values()) {
+      const parent = agent.parentAgentId;
+      if (parent && inTree.has(parent) && !inTree.has(agent.id)) {
+        inTree.add(agent.id);
+        grew = true;
+      }
+    }
+  }
+  let chatTotalTokens: number | null = null;
+  let chatTotalCostUsd: number | null = null;
+  for (const id of inTree) {
+    const usage = agents.get(id)?.lastUsage;
+    if (typeof usage?.sessionTotalTokens === "number") {
+      chatTotalTokens = (chatTotalTokens ?? 0) + usage.sessionTotalTokens;
+    }
+    if (typeof usage?.totalCostUsd === "number") {
+      chatTotalCostUsd = (chatTotalCostUsd ?? 0) + usage.totalCostUsd;
+    }
+  }
+  return { chatTotalTokens, chatTotalCostUsd };
+}
+
 function buildAgentStateSelector(serverId: string, agentId: string) {
   return (state: ReturnType<typeof useSessionStore.getState>) => {
-    const agent = state.sessions[serverId]?.agents?.get(agentId) ?? null;
+    const agents = state.sessions[serverId]?.agents;
+    const agent = agents?.get(agentId) ?? null;
+    const { chatTotalTokens, chatTotalCostUsd } = sumChatTotalsForTree(agents, agentId);
     return {
       status: agent?.status ?? null,
       contextWindowMaxTokens: agent?.lastUsage?.contextWindowMaxTokens ?? null,
       contextWindowUsedTokens: agent?.lastUsage?.contextWindowUsedTokens ?? null,
-      totalCostUsd: agent?.lastUsage?.totalCostUsd ?? null,
+      chatTotalTokens,
+      chatTotalCostUsd,
       model: agent?.model ?? null,
       provider: agent?.provider ?? null,
     };
@@ -205,7 +248,8 @@ function buildAgentStateSelector(serverId: string, agentId: string) {
 function renderContextWindowMeter(
   contextWindowMaxTokens: number | null,
   contextWindowUsedTokens: number | null,
-  totalCostUsd: number | null,
+  chatTotalTokens: number | null,
+  chatTotalCostUsd: number | null,
   showPercentage: boolean,
   serverId: string,
   provider: string | null,
@@ -217,7 +261,8 @@ function renderContextWindowMeter(
     <ContextWindowMeter
       maxTokens={contextWindowMaxTokens}
       usedTokens={contextWindowUsedTokens}
-      totalCostUsd={totalCostUsd}
+      chatTotalTokens={chatTotalTokens}
+      totalCostUsd={chatTotalCostUsd}
       showPercentage={showPercentage}
       serverId={serverId}
       provider={provider}
@@ -1647,7 +1692,8 @@ export function Composer({
       renderContextWindowMeter(
         contextWindowMaxTokens,
         contextWindowUsedTokens,
-        agentState.totalCostUsd,
+        agentState.chatTotalTokens,
+        agentState.chatTotalCostUsd,
         isCompactLayout,
         serverId,
         agentState.provider,
@@ -1655,7 +1701,8 @@ export function Composer({
     [
       contextWindowMaxTokens,
       contextWindowUsedTokens,
-      agentState.totalCostUsd,
+      agentState.chatTotalTokens,
+      agentState.chatTotalCostUsd,
       isCompactLayout,
       serverId,
       agentState.provider,

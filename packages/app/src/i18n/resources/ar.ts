@@ -1345,6 +1345,8 @@ export const ar: TranslationResources = {
     used: "تم استخدام{{percentage}}%",
     tokens: "رموز{{used}}/{{max}}",
     sessionCost: "تكلفة الجلسة{{cost}}",
+    chatTotalTitle: "إجمالي المحادثة",
+    chatTotalTokens: "{{tokens}} رمز",
     accessibility: "تم استخدام نافذة السياق{{percentage}}%",
   },
   review: {

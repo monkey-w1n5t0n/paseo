@@ -1416,6 +1416,7 @@ describe("ClaudeAgentSession context window usage", () => {
       totalCostUsd: 0.12,
       contextWindowMaxTokens: 1_000_000,
       contextWindowUsedTokens: 22,
+      sessionTotalTokens: 22,
     });
   });
 
@@ -1440,6 +1441,7 @@ describe("ClaudeAgentSession context window usage", () => {
       outputTokens: 7,
       totalCostUsd: 0.12,
       contextWindowUsedTokens: 25,
+      sessionTotalTokens: 25,
     });
   });
 
@@ -1497,6 +1499,7 @@ describe("ClaudeAgentSession context window usage", () => {
         totalCostUsd: 0.25,
         contextWindowMaxTokens: 200_000,
         contextWindowUsedTokens: 22,
+        sessionTotalTokens: 22,
       },
     });
   });
@@ -1643,6 +1646,7 @@ describe("ClaudeAgentSession context window usage", () => {
       outputTokens: 7,
       totalCostUsd: 0.12,
       contextWindowUsedTokens: 25,
+      sessionTotalTokens: 25,
     });
   });
 
@@ -1780,6 +1784,7 @@ describe("ClaudeAgentSession context window usage", () => {
         totalCostUsd: 0.25,
         contextWindowMaxTokens: 200_000,
         contextWindowUsedTokens: 420,
+        sessionTotalTokens: 22,
       });
       // Turn 2: stream usage 100 + 100 (input) + 10 (output) = 210 — drops.
       expect(secondTurn.usage).toEqual({
@@ -1789,10 +1794,32 @@ describe("ClaudeAgentSession context window usage", () => {
         totalCostUsd: 0.1,
         contextWindowMaxTokens: 200_000,
         contextWindowUsedTokens: 210,
+        sessionTotalTokens: 50,
       });
     } finally {
       await session.close();
     }
+  });
+
+  test("sessionTotalTokens accumulates result usage across turns", async () => {
+    const session = await createSessionForTest();
+
+    const first = session.convertUsage({
+      type: "result",
+      subtype: "success",
+      usage: { input_tokens: 100, cache_read_input_tokens: 200, output_tokens: 50 },
+      total_cost_usd: 0.1,
+    });
+    const second = session.convertUsage({
+      type: "result",
+      subtype: "success",
+      usage: { input_tokens: 80, cache_creation_input_tokens: 20, output_tokens: 40 },
+      total_cost_usd: 0.05,
+    });
+
+    // Turn 1 processed 100 + 200 + 50 = 350; turn 2 added 80 + 20 + 40 = 140.
+    expect(first?.sessionTotalTokens).toBe(350);
+    expect(second?.sessionTotalTokens).toBe(490);
   });
 
   test("convertUsage derives used tokens from result usage as fallback when no stream usage is available", async () => {
@@ -1815,6 +1842,7 @@ describe("ClaudeAgentSession context window usage", () => {
       outputTokens: 7,
       totalCostUsd: 0.12,
       contextWindowUsedTokens: 22,
+      sessionTotalTokens: 22,
     });
   });
 
@@ -1863,6 +1891,7 @@ describe("ClaudeAgentSession context window usage", () => {
       outputTokens: 7,
       totalCostUsd: 0.12,
       contextWindowUsedTokens: 175,
+      sessionTotalTokens: 22,
     });
   });
 
@@ -1945,6 +1974,7 @@ describe("ClaudeAgentSession context window usage", () => {
       outputTokens: 7,
       totalCostUsd: 0.12,
       contextWindowUsedTokens: 62,
+      sessionTotalTokens: 22,
     });
   });
 

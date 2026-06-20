@@ -105,6 +105,7 @@ function hasAgentUsageChanged(
     "totalCostUsd",
     "contextWindowMaxTokens",
     "contextWindowUsedTokens",
+    "sessionTotalTokens",
   ];
 
   return keys.some((key) => incomingUsage?.[key] !== currentUsage?.[key]);

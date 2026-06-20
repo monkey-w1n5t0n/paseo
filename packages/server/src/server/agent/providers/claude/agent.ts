@@ -1602,6 +1602,23 @@ function extractContextWindowSize(modelUsage: unknown): number | undefined {
   return maxContextWindow;
 }
 
+/**
+ * Total tokens processed for a single result.usage (input + cache creation +
+ * cache reads + output). Used both for the first-turn context-window estimate
+ * and for accumulating the session-wide chat total.
+ */
+function sumResultUsageTokens(usage: SDKResultMessage["usage"]): number {
+  const usageWithCacheCreation = usage as typeof usage & {
+    cache_creation_input_tokens?: number;
+  };
+  const total =
+    (usage.input_tokens ?? 0) +
+    (usageWithCacheCreation.cache_creation_input_tokens ?? 0) +
+    (usage.cache_read_input_tokens ?? 0) +
+    (usage.output_tokens ?? 0);
+  return Number.isFinite(total) ? total : 0;
+}
+
 function readStreamRequestInputTokens(event: Record<string, unknown>): number | undefined {
   const messageUsage = toObjectRecord(toObjectRecord(event.message)?.usage);
   if (!messageUsage) {
@@ -1682,6 +1699,7 @@ class ClaudeAgentSession implements AgentSession {
   private foregroundHasVisibleActivity = false;
   private activeTurnHasAssistantText = false;
   private lastContextWindowMaxTokens: number | undefined;
+  private sessionTotalTokens: number | undefined;
   private lastStreamRequestInputTokens: number | undefined;
   private lastStreamRequestOutputTokens: number | undefined;
   private userMessageIds: string[] = [];
@@ -3755,17 +3773,24 @@ class ClaudeAgentSession implements AgentSession {
       // Fallback: derive from result.usage when no stream usage was observed.
       // These values are accumulated across all API calls, but for the first
       // turn they equal the per-call values so the estimate is reasonable.
-      const usageWithCacheCreation = message.usage as typeof message.usage & {
-        cache_creation_input_tokens?: number;
-      };
-      const derived =
-        (message.usage.input_tokens ?? 0) +
-        (usageWithCacheCreation.cache_creation_input_tokens ?? 0) +
-        (message.usage.cache_read_input_tokens ?? 0) +
-        (message.usage.output_tokens ?? 0);
-      if (Number.isFinite(derived) && derived > 0) {
+      const derived = sumResultUsageTokens(message.usage);
+      if (derived > 0) {
         usage.contextWindowUsedTokens = derived;
       }
+    }
+    // Chat total: accumulate every turn's processed tokens (input + cache +
+    // output). result.usage / total_cost_usd already roll in in-process Task
+    // subagents, so this captures them; separately-spawned child agents are
+    // summed into the chat total on the client. ASSUMPTION: each result reports
+    // per-run usage (not session-cumulative) — validated by the multi-turn test
+    // in agent.test.ts. If a future SDK makes result.usage cumulative, switch
+    // the `+=` below to a max().
+    const runTokens = sumResultUsageTokens(message.usage);
+    if (runTokens > 0) {
+      this.sessionTotalTokens = (this.sessionTotalTokens ?? 0) + runTokens;
+    }
+    if (typeof this.sessionTotalTokens === "number") {
+      usage.sessionTotalTokens = this.sessionTotalTokens;
     }
     return usage;
   }

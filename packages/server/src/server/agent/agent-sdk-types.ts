@@ -205,6 +205,12 @@ export interface AgentUsage {
   totalCostUsd?: number;
   contextWindowMaxTokens?: number;
   contextWindowUsedTokens?: number;
+  /**
+   * Cumulative tokens processed across this agent's whole session (all turns,
+   * including in-process subagents). Only grows — distinct from the live
+   * `contextWindowUsedTokens`. The client sums it across the descendant tree.
+   */
+  sessionTotalTokens?: number;
 }
 
 export const TOOL_CALL_ICON_NAMES = [

@@ -1352,6 +1352,8 @@ export const en = {
     used: "{{percentage}}% used",
     tokens: "{{used}} / {{max}} tokens",
     sessionCost: "Session cost {{cost}}",
+    chatTotalTitle: "Chat total",
+    chatTotalTokens: "{{tokens}} tokens",
     accessibility: "Context window {{percentage}}% used",
   },
   review: {

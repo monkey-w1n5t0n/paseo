@@ -1373,6 +1373,8 @@ export const ru: TranslationResources = {
     used: "{{percentage}}% использовано",
     tokens: "Токены{{used}}/{{max}}",
     sessionCost: "Стоимость сеанса{{cost}}",
+    chatTotalTitle: "Всего за чат",
+    chatTotalTokens: "{{tokens}} токенов",
     accessibility: "Контекстное окно{{percentage}}% использовано",
   },
   review: {

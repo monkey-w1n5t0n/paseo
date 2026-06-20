@@ -1328,6 +1328,8 @@ export const zhCN: TranslationResources = {
     used: "已使用 {{percentage}}%",
     tokens: "{{used}} / {{max}} tokens",
     sessionCost: "会话费用 {{cost}}",
+    chatTotalTitle: "对话总计",
+    chatTotalTokens: "{{tokens}} 个令牌",
     accessibility: "上下文窗口已使用 {{percentage}}%",
   },
   review: {

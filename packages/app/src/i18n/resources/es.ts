@@ -1381,6 +1381,8 @@ export const es: TranslationResources = {
     used: "{{percentage}}% utilizado",
     tokens: "Fichas{{used}}/{{max}}",
     sessionCost: "Costo de la sesión{{cost}}",
+    chatTotalTitle: "Total del chat",
+    chatTotalTokens: "{{tokens}} fichas",
     accessibility: "Ventana de contexto{{percentage}}% utilizada",
   },
   review: {
