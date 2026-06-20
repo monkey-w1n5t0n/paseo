@@ -13,7 +13,6 @@ import {
   type Query,
   type SDKMessage,
   type SDKPartialAssistantMessage,
-  type SDKTaskProgressMessage,
   type SDKResultMessage,
   type SDKSystemMessage,
   type SDKUserMessage,
@@ -1603,27 +1602,6 @@ function extractContextWindowSize(modelUsage: unknown): number | undefined {
   return maxContextWindow;
 }
 
-function readUsageTotalTokens(usage: unknown): number | undefined {
-  if (!usage || typeof usage !== "object") {
-    return undefined;
-  }
-  const totalTokens = (usage as { total_tokens?: unknown }).total_tokens;
-  if (typeof totalTokens !== "number" || !Number.isFinite(totalTokens) || totalTokens < 0) {
-    return undefined;
-  }
-  return totalTokens;
-}
-
-function readContextWindowUsedTokensFromTaskProgress(
-  message: SDKTaskProgressMessage,
-): number | undefined {
-  return readUsageTotalTokens(message.usage);
-}
-
-function readUsageFromTaskNotification(message: { usage?: unknown }): number | undefined {
-  return readUsageTotalTokens(message.usage);
-}
-
 function readStreamRequestInputTokens(event: Record<string, unknown>): number | undefined {
   const messageUsage = toObjectRecord(toObjectRecord(event.message)?.usage);
   if (!messageUsage) {
@@ -1703,7 +1681,6 @@ class ClaudeAgentSession implements AgentSession {
   private pendingInterruptAbort = false;
   private foregroundHasVisibleActivity = false;
   private activeTurnHasAssistantText = false;
-  private lastContextWindowUsedTokens: number | undefined;
   private lastContextWindowMaxTokens: number | undefined;
   private lastStreamRequestInputTokens: number | undefined;
   private lastStreamRequestOutputTokens: number | undefined;
@@ -3455,13 +3432,13 @@ class ClaudeAgentSession implements AgentSession {
       this.appendTaskNotificationEvents(message, events);
       return;
     }
-    if (message.subtype === "task_progress") {
-      this.lastContextWindowUsedTokens =
-        readContextWindowUsedTokensFromTaskProgress(message) ?? this.lastContextWindowUsedTokens;
-      if (typeof this.lastContextWindowUsedTokens === "number") {
-        events.push(this.createUsageUpdatedEvent(this.lastContextWindowUsedTokens));
-      }
-    }
+    // NOTE: task_progress / task_notification carry a `usage.total_tokens` that
+    // is a *subagent Task's* cumulative lifetime spend (sibling fields:
+    // `tool_uses`, `duration_ms`, `subagent_type`) — NOT the main agent's
+    // context-window occupancy. A long subagent easily exceeds the window, so
+    // feeding it into the meter produced impossible readings (e.g. 191% of a 1M
+    // window). Context-window fill comes from the streaming request usage
+    // instead (see trackStreamEventUsage / convertUsage).
   }
 
   private appendTaskNotificationEvents(
@@ -3485,11 +3462,6 @@ class ClaudeAgentSession implements AgentSession {
         item: taskNotificationItem,
         provider: "claude",
       });
-    }
-    const usage = readUsageFromTaskNotification(message);
-    if (typeof usage === "number") {
-      this.lastContextWindowUsedTokens = usage;
-      events.push(this.createUsageUpdatedEvent(usage));
     }
   }
 
@@ -3770,21 +3742,19 @@ class ClaudeAgentSession implements AgentSession {
     } else if (this.lastContextWindowMaxTokens !== undefined) {
       usage.contextWindowMaxTokens = this.lastContextWindowMaxTokens;
     }
-    if (typeof this.lastContextWindowUsedTokens === "number") {
-      // task_progress.total_tokens is the accurate context window fill level.
-      // Prefer it over result.usage which contains accumulated session totals.
-      usage.contextWindowUsedTokens = this.lastContextWindowUsedTokens;
-    } else if (
+    if (
       typeof this.lastStreamRequestInputTokens === "number" &&
       typeof this.lastStreamRequestOutputTokens === "number"
     ) {
+      // The streaming request usage (message_start input + cache, plus
+      // message_delta output) is the actual context-window occupancy for the
+      // latest turn: it stays within the window and drops after compaction.
       usage.contextWindowUsedTokens =
         this.lastStreamRequestInputTokens + this.lastStreamRequestOutputTokens;
     } else if (message.usage) {
-      // Fallback: derive from result.usage when no task_progress has been
-      // received yet. These values are accumulated across all API calls, but
-      // for the first turn they equal the per-call values so the estimate is
-      // reasonable. Once a task_progress arrives it takes over permanently.
+      // Fallback: derive from result.usage when no stream usage was observed.
+      // These values are accumulated across all API calls, but for the first
+      // turn they equal the per-call values so the estimate is reasonable.
       const usageWithCacheCreation = message.usage as typeof message.usage & {
         cache_creation_input_tokens?: number;
       };

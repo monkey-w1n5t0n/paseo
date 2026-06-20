@@ -1419,7 +1419,7 @@ describe("ClaudeAgentSession context window usage", () => {
     });
   });
 
-  test("contextWindowUsedTokens falls back to result usage when no task_progress was received", async () => {
+  test("contextWindowUsedTokens falls back to result usage when no stream usage was observed", async () => {
     const session = await createSessionForTest();
 
     const usage = session.convertUsage({
@@ -1443,20 +1443,21 @@ describe("ClaudeAgentSession context window usage", () => {
     });
   });
 
-  test("contextWindowUsedTokens is populated from task_progress usage data", async () => {
+  test("task_progress usage is ignored for context window (subagent Task spend, not occupancy)", async () => {
     const session = await createSessionForTest();
 
+    // task_progress.usage.total_tokens is a subagent Task's cumulative lifetime
+    // spend, not the main agent's context-window fill. A huge value here (well
+    // above any window) must NOT inflate the meter.
     session.translateMessageToEvents({
       type: "system",
       subtype: "task_progress",
       task_id: "task-1",
       description: "Processing",
       usage: {
-        total_tokens: 999,
-        tool_uses: 1,
+        total_tokens: 1_910_000,
+        tool_uses: 42,
         duration_ms: 50,
-        input_tokens: 345,
-        cache_read_input_tokens: 55,
       },
       uuid: "task-progress-1",
       session_id: "session-1",
@@ -1485,6 +1486,7 @@ describe("ClaudeAgentSession context window usage", () => {
       session_id: "session-1",
     });
 
+    // Falls back to result.usage (10 + 5 + 7 = 22), never the task_progress total.
     expect(events).toContainEqual({
       type: "turn_completed",
       provider: "claude",
@@ -1494,12 +1496,12 @@ describe("ClaudeAgentSession context window usage", () => {
         outputTokens: 7,
         totalCostUsd: 0.25,
         contextWindowMaxTokens: 200_000,
-        contextWindowUsedTokens: 999,
+        contextWindowUsedTokens: 22,
       },
     });
   });
 
-  test("task_progress emits a usage_updated event", async () => {
+  test("task_progress does not emit a usage_updated event", async () => {
     const session = await createSessionForTest();
 
     const events = session.translateMessageToEvents({
@@ -1516,16 +1518,10 @@ describe("ClaudeAgentSession context window usage", () => {
       session_id: "session-1",
     });
 
-    expect(events).toContainEqual({
-      type: "usage_updated",
-      provider: "claude",
-      usage: {
-        contextWindowUsedTokens: 999,
-      },
-    });
+    expect(events.some((event) => event.type === "usage_updated")).toBe(false);
   });
 
-  test("task_notification emits a usage_updated event", async () => {
+  test("task_notification does not emit a usage_updated event", async () => {
     const session = await createSessionForTest();
 
     const events = session.translateMessageToEvents({
@@ -1543,13 +1539,7 @@ describe("ClaudeAgentSession context window usage", () => {
       session_id: "session-1",
     } as unknown as SDKMessage);
 
-    expect(events).toContainEqual({
-      type: "usage_updated",
-      provider: "claude",
-      usage: {
-        contextWindowUsedTokens: 777,
-      },
-    });
+    expect(events.some((event) => event.type === "usage_updated")).toBe(false);
   });
 
   test("message_start stream events emit usage_updated with per-request usage", async () => {
@@ -1617,7 +1607,7 @@ describe("ClaudeAgentSession context window usage", () => {
     });
   });
 
-  test("task_progress usage takes priority over derived result usage", async () => {
+  test("task_progress usage does not override result-derived usage", async () => {
     const session = await createSessionForTest();
 
     session.translateMessageToEvents({
@@ -1629,8 +1619,6 @@ describe("ClaudeAgentSession context window usage", () => {
         total_tokens: 999,
         tool_uses: 1,
         duration_ms: 50,
-        input_tokens: 345,
-        cache_read_input_tokens: 55,
       },
       uuid: "task-progress-1",
       session_id: "session-1",
@@ -1648,16 +1636,17 @@ describe("ClaudeAgentSession context window usage", () => {
       total_cost_usd: 0.12,
     });
 
+    // task_progress is ignored; derived from result.usage = 10 + 3 + 5 + 7 = 25.
     expect(usage).toEqual({
       inputTokens: 10,
       cachedInputTokens: 5,
       outputTokens: 7,
       totalCostUsd: 0.12,
-      contextWindowUsedTokens: 999,
+      contextWindowUsedTokens: 25,
     });
   });
 
-  test("contextWindowUsedTokens persists across turns from last task_progress", async () => {
+  test("contextWindowUsedTokens reflects per-turn stream usage and ignores task_progress", async () => {
     const queryFactory = createQueryFactoryForTurns([
       [
         {
@@ -1667,19 +1656,37 @@ describe("ClaudeAgentSession context window usage", () => {
           permissionMode: "default",
           model: "claude-sonnet-4-6",
         },
+        // A subagent Task reports a massive cumulative spend — must be ignored.
         {
           type: "system",
           subtype: "task_progress",
           task_id: "task-1",
           description: "Processing",
           usage: {
-            total_tokens: 999,
-            tool_uses: 1,
+            total_tokens: 1_910_000,
+            tool_uses: 42,
             duration_ms: 50,
-            input_tokens: 345,
-            cache_read_input_tokens: 55,
           },
           uuid: "task-progress-1",
+          session_id: "session-1",
+        },
+        {
+          type: "stream_event",
+          event: {
+            type: "message_start",
+            message: {
+              usage: {
+                input_tokens: 300,
+                cache_creation_input_tokens: 50,
+                cache_read_input_tokens: 50,
+              },
+            },
+          },
+          session_id: "session-1",
+        },
+        {
+          type: "stream_event",
+          event: { type: "message_delta", usage: { output_tokens: 20 } },
           session_id: "session-1",
         },
         {
@@ -1706,6 +1713,26 @@ describe("ClaudeAgentSession context window usage", () => {
         },
       ],
       [
+        // Turn 2 sends a smaller context (e.g. after compaction): the meter
+        // must drop accordingly, not stick at turn 1's level.
+        {
+          type: "stream_event",
+          event: {
+            type: "message_start",
+            message: {
+              usage: {
+                input_tokens: 100,
+                cache_read_input_tokens: 100,
+              },
+            },
+          },
+          session_id: "session-1",
+        },
+        {
+          type: "stream_event",
+          event: { type: "message_delta", usage: { output_tokens: 10 } },
+          session_id: "session-1",
+        },
         {
           type: "result",
           subtype: "success",
@@ -1745,31 +1772,30 @@ describe("ClaudeAgentSession context window usage", () => {
       const firstTurn = await session.run("turn 1");
       const secondTurn = await session.run("turn 2");
 
+      // Turn 1: stream usage 300 + 50 + 50 (input) + 20 (output) = 420.
       expect(firstTurn.usage).toEqual({
         inputTokens: 10,
         cachedInputTokens: 5,
         outputTokens: 7,
         totalCostUsd: 0.25,
         contextWindowMaxTokens: 200_000,
-        contextWindowUsedTokens: 999,
+        contextWindowUsedTokens: 420,
       });
-      // Turn 2 has no task_progress, so contextWindowUsedTokens retains the
-      // last known value from turn 1 rather than deriving from accumulated
-      // result.usage (which would be incorrect — those are session-level totals).
+      // Turn 2: stream usage 100 + 100 (input) + 10 (output) = 210 — drops.
       expect(secondTurn.usage).toEqual({
         inputTokens: 11,
         cachedInputTokens: 6,
         outputTokens: 8,
         totalCostUsd: 0.1,
         contextWindowMaxTokens: 200_000,
-        contextWindowUsedTokens: 999,
+        contextWindowUsedTokens: 210,
       });
     } finally {
       await session.close();
     }
   });
 
-  test("convertUsage derives used tokens from result usage as fallback when task_progress is missing", async () => {
+  test("convertUsage derives used tokens from result usage as fallback when no stream usage is available", async () => {
     const session = await createSessionForTest();
 
     const usage = session.convertUsage({
@@ -1792,7 +1818,7 @@ describe("ClaudeAgentSession context window usage", () => {
     });
   });
 
-  test("convertUsage uses per-request stream usage when no task_progress is available", async () => {
+  test("convertUsage uses per-request stream usage as the primary occupancy source", async () => {
     const session = await createSessionForTest();
 
     session.translateMessageToEvents({
